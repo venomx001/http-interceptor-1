@@ -35,34 +35,121 @@ def find_available_port(start_port, max_attempts=10):
 with open('templates/index.html', 'w') as f:
     f.write('''
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <title>Web Request Inspector</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .container { display: flex; }
-        .sidebar { width: 300px; padding-right: 20px; }
-        .main { flex-grow: 1; }
-        .request-list { height: 500px; overflow-y: auto; border: 1px solid #ccc; }
-        .request-item { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
-        .request-item:hover { background-color: #f5f5f5; }
-        .selected { background-color: #e0e0e0; }
-        .request-details { margin-top: 20px; border: 1px solid #ccc; padding: 10px; }
-        .blocked-domains { margin-top: 20px; }
-        .forge-form { margin-top: 20px; border: 1px solid #ccc; padding: 10px; }
-        textarea { width: 100%; height: 100px; }
-        .status { background-color: #f0f0f0; padding: 10px; margin: 10px 0; border-radius: 5px; }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #f8f9fa;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        h1, h2, h3, h4 { margin: 10px 0; }
+        .container {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .sidebar {
+            width: 300px;
+            background: #fff;
+            border-radius: 10px;
+            padding: 15px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+        .main {
+            flex-grow: 1;
+            background: #fff;
+            border-radius: 10px;
+            padding: 15px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+        .request-list {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .request-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+        }
+        .request-item:hover {
+            background-color: #f1f1f1;
+        }
+        .selected {
+            background-color: #dbeafe;
+        }
+        .request-details pre {
+            background-color: #f1f1f1;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        .request-details {
+            margin-bottom: 30px;
+        }
+        input[type="text"], select, textarea {
+            width: 100%;
+            margin: 8px 0;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-family: monospace;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .status {
+            padding: 10px;
+            background-color: #e9ecef;
+            border-left: 5px solid #17a2b8;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        ul li {
+            margin: 5px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        ul li button {
+            background-color: #dc3545;
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+        .forge-form h2, .blocked-domains h2, .request-details h3 {
+            margin-top: 20px;
+        }
     </style>
 </head>
 <body>
     <h1>Web Request Inspector</h1>
     <div class="status" id="proxyStatus">Proxy server status: Loading...</div>
-    
+
     <div class="container">
         <div class="sidebar">
             <h2>Requests</h2>
             <div class="request-list" id="requestList"></div>
-            
+
             <div class="blocked-domains">
                 <h2>Blocked Domains</h2>
                 <form id="blockForm">
@@ -72,12 +159,12 @@ with open('templates/index.html', 'w') as f:
                 <ul id="blockedDomainsList"></ul>
             </div>
         </div>
-        
+
         <div class="main">
             <div class="request-details" id="requestDetails">
                 <p>Select a request to view details</p>
             </div>
-            
+
             <div class="forge-form">
                 <h2>Forge Request</h2>
                 <form id="forgeForm">
@@ -87,7 +174,7 @@ with open('templates/index.html', 'w') as f:
                         <option value="PUT">PUT</option>
                         <option value="DELETE">DELETE</option>
                     </select>
-                    <input type="text" id="url" style="width: 100%;" placeholder="http://example.com/api">
+                    <input type="text" id="url" placeholder="http://example.com/api">
                     <textarea id="headers" placeholder='{"Content-Type": "application/json"}'></textarea>
                     <textarea id="body" placeholder='{"key": "value"}'></textarea>
                     <button type="submit">Send</button>
@@ -96,9 +183,8 @@ with open('templates/index.html', 'w') as f:
             </div>
         </div>
     </div>
-    
+
     <script>
-        // Setup WebSocket for real-time updates
         const ws = new WebSocket(`ws://${window.location.host}/ws`);
         ws.onmessage = function(event) {
             const data = JSON.parse(event.data);
@@ -110,24 +196,21 @@ with open('templates/index.html', 'w') as f:
                 updateProxyStatus(data.status);
             }
         };
-        
-        // Fetch proxy status
+
         function fetchProxyStatus() {
             fetch('/api/proxy-status')
                 .then(response => response.json())
-                .then(data => updateProxyStatus(data));
+                .then(updateProxyStatus);
         }
-        
+
         function updateProxyStatus(status) {
             const statusDiv = document.getElementById('proxyStatus');
             statusDiv.innerHTML = `Proxy server status: ${status.running ? 'Running' : 'Stopped'} 
-                                  ${status.running ? `on ${status.host}:${status.port}` : ''}
-                                  <button id="toggleProxy">${status.running ? 'Stop' : 'Start'}</button>`;
-            
+                ${status.running ? `on ${status.host}:${status.port}` : ''} 
+                <button id="toggleProxy">${status.running ? 'Stop' : 'Start'}</button>`;
             document.getElementById('toggleProxy').onclick = () => toggleProxy(status.running);
         }
-        
-        // Toggle proxy
+
         function toggleProxy(isRunning) {
             fetch('/api/toggle-proxy', {
                 method: 'POST',
@@ -140,49 +223,39 @@ with open('templates/index.html', 'w') as f:
                 alert(data.message);
             });
         }
-        
-        // Load initial requests
+
         function loadRequests() {
             fetch('/api/requests')
                 .then(response => response.json())
                 .then(data => {
                     const requestList = document.getElementById('requestList');
                     requestList.innerHTML = '';
-                    data.forEach(req => addRequestToList(req));
+                    data.forEach(addRequestToList);
                 });
         }
-        
+
         function addRequestToList(req) {
             const requestList = document.getElementById('requestList');
             const item = document.createElement('div');
             item.className = 'request-item';
-            item.innerHTML = `<strong>${req.method}</strong> ${req.url.substring(0, 30)}${req.url.length > 30 ? '...' : ''}`;
+            item.innerHTML = `<strong>${req.method}</strong> ${req.url.substring(0, 40)}${req.url.length > 40 ? '...' : ''}`;
             item.onclick = () => showRequestDetails(req.id);
-            
-            // Add to top of list
-            if (requestList.firstChild) {
-                requestList.insertBefore(item, requestList.firstChild);
-            } else {
-                requestList.appendChild(item);
-            }
-            
-            // Limit items
+
+            requestList.insertBefore(item, requestList.firstChild);
             while (requestList.children.length > 100) {
                 requestList.removeChild(requestList.lastChild);
             }
         }
-        
-        // Load blocked domains
+
         function loadBlockedDomains() {
             fetch('/api/blocked-domains')
                 .then(response => response.json())
-                .then(data => updateBlockedDomains(data));
+                .then(updateBlockedDomains);
         }
-        
+
         function updateBlockedDomains(domains) {
             const list = document.getElementById('blockedDomainsList');
             list.innerHTML = '';
-            
             domains.forEach(domain => {
                 const item = document.createElement('li');
                 item.textContent = domain;
@@ -196,8 +269,7 @@ with open('templates/index.html', 'w') as f:
                 list.appendChild(item);
             });
         }
-        
-        // Show request details
+
         function showRequestDetails(id) {
             fetch(`/api/request/${id}`)
                 .then(response => response.json())
@@ -205,22 +277,18 @@ with open('templates/index.html', 'w') as f:
                     const detailsDiv = document.getElementById('requestDetails');
                     detailsDiv.innerHTML = `
                         <h3>${req.method} ${req.url}</h3>
-                        <p>${req.timestamp}</p>
-                        <h4>Headers:</h4>
+                        <p><em>${req.timestamp}</em></p>
+                        <h4>Headers</h4>
                         <pre>${JSON.stringify(req.headers, null, 2)}</pre>
-                        <h4>Body:</h4>
+                        <h4>Body</h4>
                         <pre>${req.body || "(empty)"}</pre>
-                        <h4>Response:</h4>
+                        <h4>Response</h4>
                         <pre>${JSON.stringify(req.response, null, 2)}</pre>
                     `;
-                    
-                    document.querySelectorAll('.request-item').forEach(item => {
-                        item.classList.remove('selected');
-                    });
+                    document.querySelectorAll('.request-item').forEach(i => i.classList.remove('selected'));
                 });
         }
-        
-        // Block domain
+
         document.getElementById('blockForm').addEventListener('submit', function(e) {
             e.preventDefault();
             const domain = document.getElementById('domainInput').value.trim();
@@ -235,8 +303,7 @@ with open('templates/index.html', 'w') as f:
                 });
             }
         });
-        
-        // Unblock domain
+
         function unblockDomain(domain) {
             fetch('/api/unblock-domain', {
                 method: 'POST',
@@ -244,22 +311,19 @@ with open('templates/index.html', 'w') as f:
                 body: JSON.stringify({domain})
             }).then(() => loadBlockedDomains());
         }
-        
-        // Forge request
+
         document.getElementById('forgeForm').addEventListener('submit', function(e) {
             e.preventDefault();
             const method = document.getElementById('method').value;
             const url = document.getElementById('url').value;
-            let headers = {};
-            let body = '';
-            
+            let headers = {}, body = '';
+
             try {
                 const headersText = document.getElementById('headers').value;
                 if (headersText) headers = JSON.parse(headersText);
-                
                 const bodyText = document.getElementById('body').value;
                 if (bodyText) body = bodyText;
-                
+
                 fetch('/api/forge-request', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -279,8 +343,7 @@ with open('templates/index.html', 'w') as f:
                 `;
             }
         });
-        
-        // Initial load
+
         fetchProxyStatus();
         loadRequests();
         loadBlockedDomains();
