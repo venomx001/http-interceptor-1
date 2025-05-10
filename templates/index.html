@@ -104,6 +104,13 @@
         .forge-form h2, .blocked-domains h2, .request-details h3 {
             margin-top: 20px;
         }
+        .debug-info {
+            background-color: #fafafa;
+            padding: 10px;
+            margin-top: 20px;
+            border-radius: 5px;
+            border: 1px solid #eee;
+        }
     </style>
 </head>
 <body>
@@ -146,6 +153,12 @@
                 </form>
                 <div id="forgeResponse"></div>
             </div>
+            
+            <div class="debug-info" id="debugInfo">
+                <h2>Debugging Information</h2>
+                <p>This section shows information about domain blocking.</p>
+                <div id="debugContent"></div>
+            </div>
         </div>
     </div>
 
@@ -159,8 +172,23 @@
                 updateBlockedDomains(data.domains);
             } else if (data.type === 'proxy_status') {
                 updateProxyStatus(data.status);
+            } else if (data.type === 'debug_info') {
+                updateDebugInfo(data.message);
             }
         };
+
+        function updateDebugInfo(message) {
+            const debugContent = document.getElementById('debugContent');
+            const now = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.innerHTML = `<p><strong>${now}</strong>: ${message}</p>`;
+            debugContent.insertBefore(entry, debugContent.firstChild);
+            
+            // Keep only last 10 messages
+            while (debugContent.children.length > 10) {
+                debugContent.removeChild(debugContent.lastChild);
+            }
+        }
 
         function fetchProxyStatus() {
             fetch('/api/proxy-status')
@@ -172,7 +200,8 @@
             const statusDiv = document.getElementById('proxyStatus');
             statusDiv.innerHTML = `Proxy server status: ${status.running ? 'Running' : 'Stopped'} 
                 ${status.running ? `on ${status.host}:${status.port}` : ''} 
-                <button id="toggleProxy">${status.running ? 'Stop' : 'Start'}</button>`;
+                <button id="toggleProxy">${status.running ? 'Stop' : 'Start'}</button>
+                ${status.running ? ' <span>Configure your browser proxy to <strong>' + status.host + ':' + status.port + '</strong></span>' : ''}`;
             document.getElementById('toggleProxy').onclick = () => toggleProxy(status.running);
         }
 
@@ -308,6 +337,29 @@
                 `;
             }
         });
+
+        // Check domain against blocking rules
+        function testBlockDomain() {
+            const testUrl = prompt("Enter URL to test against blocking rules:", "http://example.com");
+            if (!testUrl) return;
+            
+            fetch('/api/test-blocking', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({url: testUrl})
+            })
+            .then(response => response.json())
+            .then(data => {
+                updateDebugInfo(`Test URL: ${testUrl} - ${data.blocked ? 'BLOCKED' : 'ALLOWED'} - ${data.message}`);
+            });
+        }
+
+        // Add test button to debug section
+        const debugDiv = document.getElementById('debugInfo');
+        const testButton = document.createElement('button');
+        testButton.textContent = 'Test URL Against Blocks';
+        testButton.onclick = testBlockDomain;
+        debugDiv.insertBefore(testButton, document.getElementById('debugContent'));
 
         fetchProxyStatus();
         loadRequests();

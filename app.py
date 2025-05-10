@@ -31,6 +31,54 @@ def find_available_port(start_port, max_attempts=10):
                 return port
     return None
 
+# Helper function to normalize domain name for more reliable matching
+def normalize_domain(domain):
+    # Remove potential protocol
+    if '://' in domain:
+        domain = domain.split('://', 1)[1]
+    
+    # Remove path components
+    if '/' in domain:
+        domain = domain.split('/', 1)[0]
+    
+    # Remove port number if present
+    if ':' in domain:
+        domain = domain.split(':', 1)[0]
+    
+    # Lowercase all text
+    domain = domain.lower()
+    
+    # Optional: remove 'www.' prefix for more general blocking
+    if domain.startswith('www.'):
+        domain = domain[4:]
+        
+    return domain
+
+# Function to check if a domain is blocked
+def is_domain_blocked(url):
+    parsed_url = urlparse(url)
+    domain = parsed_url.netloc.lower()
+    
+    # First try exact match
+    if domain in blocked_domains:
+        logger.info(f"Domain {domain} is blocked (exact match)")
+        return True
+    
+    # Then try normalized match
+    normalized = normalize_domain(domain)
+    if normalized in blocked_domains:
+        logger.info(f"Domain {domain} is blocked (normalized as {normalized})")
+        return True
+    
+    # Try checking if it's a subdomain of a blocked domain
+    for blocked in blocked_domains:
+        if domain.endswith('.' + blocked):
+            logger.info(f"Domain {domain} is blocked (subdomain of {blocked})")
+            return True
+    
+    logger.info(f"Domain {domain} is not blocked")
+    return False
+
 # Create simplified HTML template
 with open('templates/index.html', 'w') as f:
     f.write('''
@@ -139,6 +187,13 @@ with open('templates/index.html', 'w') as f:
         .forge-form h2, .blocked-domains h2, .request-details h3 {
             margin-top: 20px;
         }
+        .debug-info {
+            background-color: #fafafa;
+            padding: 10px;
+            margin-top: 20px;
+            border-radius: 5px;
+            border: 1px solid #eee;
+        }
     </style>
 </head>
 <body>
@@ -181,6 +236,12 @@ with open('templates/index.html', 'w') as f:
                 </form>
                 <div id="forgeResponse"></div>
             </div>
+            
+            <div class="debug-info" id="debugInfo">
+                <h2>Debugging Information</h2>
+                <p>This section shows information about domain blocking.</p>
+                <div id="debugContent"></div>
+            </div>
         </div>
     </div>
 
@@ -194,8 +255,23 @@ with open('templates/index.html', 'w') as f:
                 updateBlockedDomains(data.domains);
             } else if (data.type === 'proxy_status') {
                 updateProxyStatus(data.status);
+            } else if (data.type === 'debug_info') {
+                updateDebugInfo(data.message);
             }
         };
+
+        function updateDebugInfo(message) {
+            const debugContent = document.getElementById('debugContent');
+            const now = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.innerHTML = `<p><strong>${now}</strong>: ${message}</p>`;
+            debugContent.insertBefore(entry, debugContent.firstChild);
+            
+            // Keep only last 10 messages
+            while (debugContent.children.length > 10) {
+                debugContent.removeChild(debugContent.lastChild);
+            }
+        }
 
         function fetchProxyStatus() {
             fetch('/api/proxy-status')
@@ -207,7 +283,8 @@ with open('templates/index.html', 'w') as f:
             const statusDiv = document.getElementById('proxyStatus');
             statusDiv.innerHTML = `Proxy server status: ${status.running ? 'Running' : 'Stopped'} 
                 ${status.running ? `on ${status.host}:${status.port}` : ''} 
-                <button id="toggleProxy">${status.running ? 'Stop' : 'Start'}</button>`;
+                <button id="toggleProxy">${status.running ? 'Stop' : 'Start'}</button>
+                ${status.running ? ' <span>Configure your browser proxy to <strong>' + status.host + ':' + status.port + '</strong></span>' : ''}`;
             document.getElementById('toggleProxy').onclick = () => toggleProxy(status.running);
         }
 
@@ -344,6 +421,29 @@ with open('templates/index.html', 'w') as f:
             }
         });
 
+        // Check domain against blocking rules
+        function testBlockDomain() {
+            const testUrl = prompt("Enter URL to test against blocking rules:", "http://example.com");
+            if (!testUrl) return;
+            
+            fetch('/api/test-blocking', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({url: testUrl})
+            })
+            .then(response => response.json())
+            .then(data => {
+                updateDebugInfo(`Test URL: ${testUrl} - ${data.blocked ? 'BLOCKED' : 'ALLOWED'} - ${data.message}`);
+            });
+        }
+
+        // Add test button to debug section
+        const debugDiv = document.getElementById('debugInfo');
+        const testButton = document.createElement('button');
+        testButton.textContent = 'Test URL Against Blocks';
+        testButton.onclick = testBlockDomain;
+        debugDiv.insertBefore(testButton, document.getElementById('debugContent'));
+
         fetchProxyStatus();
         loadRequests();
         loadBlockedDomains();
@@ -380,6 +480,9 @@ def broadcast_update(data):
         except:
             ws_clients.remove(client)
 
+def broadcast_debug(message):
+    broadcast_update({"type": "debug_info", "message": message})
+
 # API routes
 @app.route('/api/requests')
 def get_requests():
@@ -401,8 +504,10 @@ def block_domain():
     data = request.json
     domain = data.get('domain', '').strip()
     if domain:
-        blocked_domains.add(domain)
+        normalized = normalize_domain(domain)
+        blocked_domains.add(normalized)
         broadcast_update({"type": "blocked_domains", "domains": list(blocked_domains)})
+        broadcast_debug(f"Added domain to block list: {normalized} (from input: {domain})")
     return jsonify({"success": True})
 
 @app.route('/api/unblock-domain', methods=['POST'])
@@ -412,7 +517,33 @@ def unblock_domain():
     if domain in blocked_domains:
         blocked_domains.remove(domain)
         broadcast_update({"type": "blocked_domains", "domains": list(blocked_domains)})
+        broadcast_debug(f"Removed domain from block list: {domain}")
     return jsonify({"success": True})
+
+@app.route('/api/test-blocking', methods=['POST'])
+def test_blocking():
+    data = request.json
+    url = data.get('url', '')
+    
+    if not url:
+        return jsonify({"blocked": False, "message": "No URL provided"})
+    
+    parsed_url = urlparse(url)
+    domain = parsed_url.netloc
+    normalized = normalize_domain(domain)
+    
+    is_blocked = is_domain_blocked(url)
+    
+    message = f"Domain: {domain}, Normalized: {normalized}"
+    return jsonify({
+        "blocked": is_blocked,
+        "message": message,
+        "details": {
+            "original": domain,
+            "normalized": normalized,
+            "blocked_domains": list(blocked_domains)
+        }
+    })
 
 @app.route('/api/forge-request', methods=['POST'])
 def forge_request():
@@ -441,14 +572,12 @@ def forge_request():
     }
     
     # Check if domain is blocked
-    parsed_url = urlparse(url)
-    domain = parsed_url.netloc
-    if domain in blocked_domains:
-        req_data["response"] = {"error": f"Domain {domain} is blocked"}
+    if is_domain_blocked(url):
+        req_data["response"] = {"error": f"Domain is blocked"}
         intercepted_requests.appendleft(req_data)
         request_counter += 1
         broadcast_update({"type": "request", "request": req_data})
-        return jsonify({"error": f"Domain {domain} is blocked"}), 403
+        return jsonify({"error": f"Domain is blocked"}), 403
     
     # Make request
     try:
@@ -502,6 +631,10 @@ class ProxyServer:
         class ProxyHandler(BaseHTTPRequestHandler):
             timeout = 10
             
+            def log_message(self, format, *args):
+                # Override to use our logger
+                logger.info(format % args)
+            
             def do_GET(self):
                 self._handle_request('GET')
             
@@ -521,10 +654,12 @@ class ProxyServer:
                 host = host_port[0]
                 port = int(host_port[1]) if len(host_port) > 1 else 443
                 
+                full_url = f"https://{host}:{port}"
+                
                 req_data = {
                     "id": request_counter,
                     "method": "CONNECT",
-                    "url": f"https://{host}:{port}",
+                    "url": full_url,
                     "headers": dict(self.headers),
                     "body": "",
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -532,8 +667,32 @@ class ProxyServer:
                     "response": {"info": "HTTPS connection tunneled"}
                 }
                 
+                # Log the connection attempt
+                logger.info(f"CONNECT request for {host}:{port}")
+                broadcast_debug(f"CONNECT request for {host}:{port}")
+                
                 # Check if domain is blocked
-                if host in blocked_domains:
+                domain_blocked = False
+                for blocked in blocked_domains:
+                    # Try direct matching
+                    if host == blocked:
+                        domain_blocked = True
+                        break
+                    
+                    # Try normalized domain matching
+                    if normalize_domain(host) == blocked:
+                        domain_blocked = True
+                        break
+                    
+                    # Try subdomain matching
+                    if host.endswith('.' + blocked):
+                        domain_blocked = True
+                        break
+                
+                if domain_blocked:
+                    logger.info(f"Blocking connection to {host} - matched blocked domain")
+                    broadcast_debug(f"BLOCKED connection to {host}")
+                    
                     self.send_error(403, f"Domain {host} is blocked")
                     req_data["response"] = {"error": f"Domain {host} is blocked"}
                     intercepted_requests.appendleft(req_data)
@@ -559,6 +718,7 @@ class ProxyServer:
                     socket_tunnel(self.connection, remote_socket)
                     
                 except Exception as e:
+                    logger.error(f"Error connecting to {host}:{port} - {str(e)}")
                     self.send_error(500, str(e))
                     req_data["response"] = {"error": str(e)}
                     intercepted_requests.appendleft(req_data)
@@ -579,6 +739,10 @@ class ProxyServer:
                 content_length = int(self.headers.get('Content-Length', 0))
                 body = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else ''
                 
+                # Log the request
+                logger.info(f"{method} request for {url}")
+                broadcast_debug(f"{method} request for {url}")
+                
                 # Create request data
                 req_data = {
                     "id": request_counter,
@@ -592,15 +756,16 @@ class ProxyServer:
                 }
                 
                 # Check if domain is blocked
-                parsed_url = urlparse(url)
-                domain = parsed_url.netloc
-                if domain in blocked_domains:
+                if is_domain_blocked(url):
+                    logger.info(f"Blocking request to {url} - matched blocked domain")
+                    broadcast_debug(f"BLOCKED request to {url}")
+                    
                     self.send_response(403)
                     self.send_header('Content-type', 'text/html')
                     self.end_headers()
-                    self.wfile.write(f"Domain {domain} is blocked".encode())
+                    self.wfile.write(f"Domain is blocked".encode())
                     
-                    req_data["response"] = {"error": f"Domain {domain} is blocked"}
+                    req_data["response"] = {"error": f"Domain is blocked"}
                     intercepted_requests.appendleft(req_data)
                     request_counter += 1
                     broadcast_update({"type": "request", "request": req_data})
@@ -641,6 +806,7 @@ class ProxyServer:
                     }
                     
                 except Exception as e:
+                    logger.error(f"Error handling request to {url} - {str(e)}")
                     self.send_response(500)
                     self.send_header('Content-type', 'text/html')
                     self.end_headers()
@@ -688,12 +854,17 @@ class ProxyServer:
             self.thread.start()
             self.running = True
             
+            # Broadcast status
             # Broadcast status update
             status = {"running": True, "host": self.host, "port": self.port}
             broadcast_update({"type": "proxy_status", "status": status})
             
+            logger.info(f"Proxy server started on {self.host}:{self.port}")
+            broadcast_debug(f"Proxy server started on {self.host}:{self.port}")
+            
             return {"success": True, "message": f"Proxy started on {self.host}:{self.port}"}
         except Exception as e:
+            logger.error(f"Error starting proxy: {str(e)}")
             return {"success": False, "message": f"Error starting proxy: {str(e)}"}
     
     def stop(self):
@@ -704,6 +875,9 @@ class ProxyServer:
             # Broadcast status update
             status = {"running": False, "host": self.host, "port": self.port}
             broadcast_update({"type": "proxy_status", "status": status})
+            
+            logger.info("Proxy server stopped")
+            broadcast_debug("Proxy server stopped")
             
             return {"success": True, "message": "Proxy server stopped"}
         return {"success": False, "message": "Proxy server not running"}
