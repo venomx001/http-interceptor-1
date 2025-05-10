@@ -86,7 +86,7 @@ with open('templates/index.html', 'w') as f:
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Web Request Inspector</title>
+    <title>Web Request Interceptor</title>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -197,7 +197,7 @@ with open('templates/index.html', 'w') as f:
     </style>
 </head>
 <body>
-    <h1>Web Request Inspector</h1>
+    <h1>Web Request Interceptor</h1>
     <div class="status" id="proxyStatus">Proxy server status: Loading...</div>
 
     <div class="container">
@@ -238,7 +238,7 @@ with open('templates/index.html', 'w') as f:
             </div>
             
             <div class="debug-info" id="debugInfo">
-                <h2>Debugging Information</h2>
+                <h2>Diagnostic Output</h2>
                 <p>This section shows information about domain blocking.</p>
                 <div id="debugContent"></div>
             </div>
@@ -280,26 +280,36 @@ with open('templates/index.html', 'w') as f:
         }
 
         function updateProxyStatus(status) {
-            const statusDiv = document.getElementById('proxyStatus');
-            statusDiv.innerHTML = `Proxy server status: ${status.running ? 'Running' : 'Stopped'} 
-                ${status.running ? `on ${status.host}:${status.port}` : ''} 
-                <button id="toggleProxy">${status.running ? 'Stop' : 'Start'}</button>
-                ${status.running ? ' <span>Configure your browser proxy to <strong>' + status.host + ':' + status.port + '</strong></span>' : ''}`;
-            document.getElementById('toggleProxy').onclick = () => toggleProxy(status.running);
-        }
-
+    const statusDiv = document.getElementById('proxyStatus');
+    statusDiv.innerHTML = `
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <strong>Proxy server status:</strong> ${status.running ? '<span class="text-success">Running</span>' : '<span class="text-danger">Stopped</span>'}
+                ${status.running ? `<br><span class="text-primary small"> Configure your browser proxy to <code>${status.host}:${status.port}</code></span>` : ''}
+            </div>
+            <button id="toggleProxy" class="btn btn-${status.running ? 'danger' : 'success'} btn-sm">
+                ${status.running ? 'Stop' : 'Start'}
+            </button>
+        </div>
+    `;
+    document.getElementById('toggleProxy').onclick = () => toggleProxy(status.running);
+}
         function toggleProxy(isRunning) {
-            fetch('/api/toggle-proxy', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({action: isRunning ? 'stop' : 'start'})
-            })
-            .then(response => response.json())
-            .then(data => {
-                fetchProxyStatus();
-                alert(data.message);
-            });
+    fetch('/api/toggle-proxy', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: isRunning ? 'stop' : 'start'})
+    })
+    .then(response => response.json())
+    .then(data => {
+        fetchProxyStatus();
+        alert(data.message);
+        if (data.success && data.message.includes("Proxy started")) {
+            alert(" Configure your browser proxy to 127.0.0.1:8080");
         }
+    });
+}
+
 
         function loadRequests() {
             fetch('/api/requests')
